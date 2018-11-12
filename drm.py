@@ -26,6 +26,12 @@ def IOR(type, nr, size):
 def IOWR(type, nr, size):
     return IOC(IOC_READ | IOC_WRITE, type, nr, size)
 
+class Error(Exception):
+    pass
+
+class DeprecatedError(Error):
+    pass
+
 class drm_version(ctypes.Structure):
     _fields_ = [
         ('version_major', ctypes.c_int),
@@ -38,6 +44,29 @@ class drm_version(ctypes.Structure):
         ('desc_len', ctypes.c_ulong),
         ('desc', ctypes.c_char_p)
     ]
+
+DRM_MODE_FLAG_PHSYNC = 1 << 0
+DRM_MODE_FLAG_NHSYNC = 1 << 1
+DRM_MODE_FLAG_PVSYNC = 1 << 2
+DRM_MODE_FLAG_NVSYNC = 1 << 3
+DRM_MODE_FLAG_INTERLACE = 1 << 4
+DRM_MODE_FLAG_DBLSCAN = 1 << 5
+DRM_MODE_FLAG_CSYNC = 1 << 6
+DRM_MODE_FLAG_PCSYNC = 1 << 7
+DRM_MODE_FLAG_NCSYNC = 1 << 8
+DRM_MODE_FLAG_HSKEW = 1 << 9
+DRM_MODE_FLAG_BCAST = 1 << 10
+DRM_MODE_FLAG_PIXMUX = 1 << 11
+DRM_MODE_FLAG_DBLCLK = 1 << 12
+DRM_MODE_FLAG_CLKDIV2 = 1 << 13
+
+DRM_MODE_TYPE_BUILTIN = 1 << 0
+DRM_MODE_TYPE_CLOCK_C = 1 << 1 | DRM_MODE_TYPE_BUILTIN
+DRM_MODE_TYPE_CRTC_C = 1 << 2 | DRM_MODE_TYPE_BUILTIN
+DRM_MODE_TYPE_PREFERRED = 1 << 3
+DRM_MODE_TYPE_DEFAULT = 1 << 4
+DRM_MODE_TYPE_USERDEF = 1 << 5
+DRM_MODE_TYPE_DRIVER = 1 << 6
 
 class drm_mode_info(ctypes.Structure):
     _fields_ = [
@@ -58,30 +87,110 @@ class drm_mode_info(ctypes.Structure):
         ('name', (32 * ctypes.c_char))
     ]
 
+    def __eq__(self, other):
+        for field in self._fields:
+            if getattr(self, field[0]) != getattr(other, field[0]):
+                return False
+
+        return True
+
     def __str__(self):
         return '%ux%u-%u' % (self.hdisplay, self.vdisplay, self.vrefresh)
 
-CAP_DUMB_BUFFER = 0x1
-CAP_VBLANK_HIGH_CRTC = 0x2
-CAP_DUMB_PREFERRED_DEPTH = 0x3
-CAP_DUMB_PREFER_SHADOW = 0x4
-CAP_PRIME = 0x05
-CAP_PRIME_IMPORT = 0x01
-CAP_PRIME_EXPORT = 0x02
-CAP_TIMESTAMP_MONOTONIC = 0x6
-CAP_ASYNC_PAGE_FLIP = 0x7
-CAP_CURSOR_WIDTH = 0x8
-CAP_CURSOR_HEIGHT = 0x9
-CAP_ADDFB2_MODIFIERS = 0x10
-CAP_PAGE_FLIP_TARGET = 0x11
-CAP_CRTC_IN_VBLANK_EVENT = 0x12
-CAP_SYNCOBJ = 0x13
+    def get_flags(self):
+        flags = []
 
-CLIENT_CAP_STEREO_3D = 0x01
-CLIENT_CAP_UNIVERSAL_PLANES = 0x02
-CLIENT_CAP_ATOMIC = 0x03
-CLIENT_CAP_ASPECT_RATIO = 0x04
-CLIENT_CAP_WRITEBACK_CONNECTORS = 0x05
+        if self.flags & DRM_MODE_FLAG_PHSYNC:
+            flags.append('phsync')
+
+        if self.flags & DRM_MODE_FLAG_NHSYNC:
+            flags.append('nhsync')
+
+        if self.flags & DRM_MODE_FLAG_PVSYNC:
+            flags.append('pvsync')
+
+        if self.flags & DRM_MODE_FLAG_NVSYNC:
+            flags.append('nvsync')
+
+        if self.flags & DRM_MODE_FLAG_INTERLACE:
+            flags.append('interlace')
+
+        if self.flags & DRM_MODE_FLAG_DBLSCAN:
+            flags.append('dblscan')
+
+        if self.flags & DRM_MODE_FLAG_CSYNC:
+            flags.append('csync')
+
+        if self.flags & DRM_MODE_FLAG_PCSYNC:
+            flags.append('pcsync')
+
+        if self.flags & DRM_MODE_FLAG_NCSYNC:
+            flags.append('ncsync')
+
+        if self.flags & DRM_MODE_FLAG_HSKEW:
+            flags.append('hskew')
+
+        if self.flags & DRM_MODE_FLAG_BCAST:
+            flags.append('bcast')
+
+        if self.flags & DRM_MODE_FLAG_PIXMUX:
+            flags.append('pixmux')
+
+        if self.flags & DRM_MODE_FLAG_DBLCLK:
+            flags.append('dblclk')
+
+        if self.flags & DRM_MODE_FLAG_CLKDIV2:
+            flags.append('clkdiv2')
+
+        return flags
+
+    def get_types(self):
+        types = []
+
+        if self.type & DRM_MODE_TYPE_BUILTIN:
+            types.append('builtin')
+
+        if self.type & DRM_MODE_TYPE_CLOCK_C:
+            types.append('clock-c')
+
+        if self.type & DRM_MODE_TYPE_CRTC_C:
+            types.append('crtc-c')
+
+        if self.type & DRM_MODE_TYPE_PREFERRED:
+            types.append('preferred')
+
+        if self.type & DRM_MODE_TYPE_DEFAULT:
+            types.append('default')
+
+        if self.type & DRM_MODE_TYPE_USERDEF:
+            types.append('userdef')
+
+        if self.type & DRM_MODE_TYPE_DRIVER:
+            types.append('driver')
+
+        return types
+
+DRM_CAP_DUMB_BUFFER = 0x1
+DRM_CAP_VBLANK_HIGH_CRTC = 0x2
+DRM_CAP_DUMB_PREFERRED_DEPTH = 0x3
+DRM_CAP_DUMB_PREFER_SHADOW = 0x4
+DRM_CAP_PRIME = 0x05
+DRM_CAP_PRIME_IMPORT = 0x01
+DRM_CAP_PRIME_EXPORT = 0x02
+DRM_CAP_TIMESTAMP_MONOTONIC = 0x6
+DRM_CAP_ASYNC_PAGE_FLIP = 0x7
+DRM_CAP_CURSOR_WIDTH = 0x8
+DRM_CAP_CURSOR_HEIGHT = 0x9
+DRM_CAP_ADDFB2_MODIFIERS = 0x10
+DRM_CAP_PAGE_FLIP_TARGET = 0x11
+DRM_CAP_CRTC_IN_VBLANK_EVENT = 0x12
+DRM_CAP_SYNCOBJ = 0x13
+
+DRM_CLIENT_CAP_STEREO_3D = 0x01
+DRM_CLIENT_CAP_UNIVERSAL_PLANES = 0x02
+DRM_CLIENT_CAP_ATOMIC = 0x03
+DRM_CLIENT_CAP_ASPECT_RATIO = 0x04
+DRM_CLIENT_CAP_WRITEBACK_CONNECTORS = 0x05
 
 class drm_capability(ctypes.Structure):
     _fields_ = [
@@ -120,6 +229,26 @@ class drm_mode_get_encoder(ctypes.Structure):
         ('possible_crtcs', ctypes.c_uint32),
         ('possible_clones', ctypes.c_uint32)
     ]
+
+DRM_MODE_CONNECTOR_Unknown = 0
+DRM_MODE_CONNECTOR_VGA = 1
+DRM_MODE_CONNECTOR_DVII = 2
+DRM_MODE_CONNECTOR_DVID = 3
+DRM_MODE_CONNECTOR_DVIA = 4
+DRM_MODE_CONNECTOR_Composite = 5
+DRM_MODE_CONNECTOR_SVIDEO = 6
+DRM_MODE_CONNECTOR_LVDS = 7
+DRM_MODE_CONNECTOR_Component = 8
+DRM_MODE_CONNECTOR_9PinDIN = 9
+DRM_MODE_CONNECTOR_DisplayPort = 10
+DRM_MODE_CONNECTOR_HDMIA = 11
+DRM_MODE_CONNECTOR_HDMIB = 12
+DRM_MODE_CONNECTOR_TV = 13
+DRM_MODE_CONNECTOR_eDP = 14
+DRM_MODE_CONNECTOR_VIRTUAL = 15
+DRM_MODE_CONNECTOR_DSI = 16
+DRM_MODE_CONNECTOR_DPI = 17
+DRM_MODE_CONNECTOR_WRITEBACK = 18
 
 class drm_mode_get_connector(ctypes.Structure):
     _fields_ = [
@@ -225,6 +354,29 @@ DRM_IOCTL_MODE_GETPROPBLOB = DRM_IOWR(0xac, drm_mode_get_blob)
 DRM_IOCTL_MODE_GETPLANERESOURCES = DRM_IOWR(0xb5, drm_mode_plane_resources)
 DRM_IOCTL_MODE_GETPLANE = DRM_IOWR(0xb6, drm_mode_get_plane)
 
+def get_flags(value):
+    flags = []
+
+    if value & DRM_MODE_PROP_PENDING:
+        flags.append('pending')
+
+    if value & DRM_MODE_PROP_RANGE:
+        flags.append('range')
+
+    if value & DRM_MODE_PROP_IMMUTABLE:
+        flags.append('immutable')
+
+    if value & DRM_MODE_PROP_ENUM:
+        flags.append('enum')
+
+    if value & DRM_MODE_PROP_BLOB:
+        flags.append('blob')
+
+    if value & DRM_MODE_PROP_BITMASK:
+        flags.append('bitmask')
+
+    return flags
+
 class Version:
     def __init__(self, version):
         self.major = version.version_major
@@ -256,6 +408,94 @@ class Mode:
     def __init__(self, mode):
         self.name = mode.name.encode('UTF-8')
 
+DRM_MODE_PROP_PENDING = 1 << 0
+DRM_MODE_PROP_RANGE = 1 << 1
+DRM_MODE_PROP_IMMUTABLE = 1 << 2
+DRM_MODE_PROP_ENUM = 1 << 3
+DRM_MODE_PROP_BLOB = 1 << 4
+DRM_MODE_PROP_BITMASK = 1 << 5
+
+DRM_MODE_PROP_EXTENDED_TYPE = 0x0000ffc0
+
+def DRM_MODE_PROP_TYPE(prop_type):
+    return prop_type << 6
+
+DRM_MODE_PROP_OBJECT = DRM_MODE_PROP_TYPE(1)
+DRM_MODE_PROP_SIGNED_RANGE = DRM_MODE_PROP_TYPE(2)
+
+DRM_MODE_PROP_ATOMIC = 0x80000000
+
+class Blob:
+    def __init__(self, blob_id, data):
+        self.id = blob_id
+        self.data = data
+
+    def __str__(self):
+        return '%u, %u bytes' % (self.id, len(self.data))
+
+class Property:
+    def __init__(self, prop_id, name, flags):
+        self.id = prop_id
+        self.name = name
+        self.flags = flags
+
+    @property
+    def immutable(self):
+        return 'immutable' in self.flags
+
+class PropertyPending(Property):
+    def __init__(self, prop_id, name, flags):
+        super().__init__(prop_id, name, flags)
+
+class PropertyRange(Property):
+    def __init__(self, prop_id, name, flags, minimum, maximum):
+        super().__init__(prop_id, name, flags)
+
+        self.min = minimum
+        self.max = maximum
+
+    def __str__(self):
+        return '%u: %s (range: %d-%d)' % (self.id, self.name, self.min, self.max)
+
+class PropertyEnum(Property):
+    def __init__(self, prop_id, name, flags, enums):
+        super().__init__(prop_id, name, flags)
+
+        self.enums = enums
+
+    def __str__(self):
+        return '%u: %s (enum: %s)' % (self.id, self.name, self.enums)
+
+class PropertyBlob(Property):
+    def __init__(self, prop_id, name, flags, blob):
+        super().__init__(prop_id, name, flags)
+
+        self.blob = blob
+
+    def __str__(self):
+        return '%u: %s (blob: %s)' % (self.id, self.name, self.blob)
+
+class PropertyBitmask(Property):
+    pass
+
+class PropertyObject(Property):
+    pass
+
+    def __init__(self, device, prop_id, value):
+        self.device = device
+        self.id = prop_id
+        self.value = value
+        self.blob = None
+
+        self.name = args.name.decode('utf-8')
+
+    def __str__(self):
+        return '%u: %s -> %u' % (self.id, self.name, self.value)
+
+DRM_MODE_CONNECTED = 1
+DRM_MODE_DISCONNECTED = 2
+DRM_MODE_UNKNOWNCONNECTION = 3
+
 class Framebuffer:
     def __init__(self, device, id):
         self.device = device
@@ -265,14 +505,19 @@ class Framebuffer:
         return '%u' % self.id
 
 class CRTC:
-    def __init__(self, device, id):
+    def __init__(self, device, crtc_id):
         self.device = device
-        self.id = id
+        self.id = crtc_id
 
         args = drm_mode_crtc()
-        args.crtc_id = id
+        args.crtc_id = self.id
 
         device.ioctl(DRM_IOCTL_MODE_GETCRTC, args)
+
+        if args.mode_valid:
+            self.mode = args.mode
+        else:
+            self.mode = None
 
         print('count_connectors:', args.count_connectors)
         print('crtc_id:', args.crtc_id)
@@ -302,82 +547,48 @@ class CRTC:
     def __repr__(self):
         return '%u' % self.id
 
-DRM_MODE_PROP_PENDING = 1 << 0
-DRM_MODE_PROP_RANGE = 1 << 1
-DRM_MODE_PROP_IMMUTABLE = 1 << 2
-DRM_MODE_PROP_ENUM = 1 << 3
-DRM_MODE_PROP_BLOB = 1 << 4
-DRM_MODE_PROP_BITMASK = 1 << 5
-
-DRM_MODE_PROP_EXTENDED_TYPE = 0x0000ffc0
-
-def DRM_MODE_PROP_TYPE(prop_type):
-    return prop_type << 6
-
-DRM_MODE_PROP_OBJECT = DRM_MODE_PROP_TYPE(1)
-DRM_MODE_PROP_SIGNED_RANGE = DRM_MODE_PROP_TYPE(2)
-
-DRM_MODE_PROP_ATOMIC = 0x80000000
-
-class Blob:
-    def __init__(self, device, blob_id):
-        args = drm_mode_get_blob()
-        args.blob_id = blob_id
-
-        device.ioctl(DRM_IOCTL_MODE_GETPROPBLOB, args)
-
-        print('  blob: %u' % blob_id)
-        print('    length: %u bytes' % args.length)
-
-        if args.length > 0:
-            data = (ctypes.c_byte * args.length)()
-            args.data = data
-
-            device.ioctl(DRM_IOCTL_MODE_GETPROPBLOB, args)
-
-            self.data = bytes(data)
-
-        print('    data:\n     ', end = '')
-        count = 0
-
-        for byte in self.data:
-            if count >= 16:
-                print('\n     ', end = '')
-                count = 0
-
-            print(' %02x' % byte, end = '')
-            count += 1
-
-        print()
-
-class Property:
-    def __init__(self, device, prop_id, value):
-        self.device = device
-        self.id = prop_id
-        self.value = value
-        self.blob = None
-
-        self.name = args.name.decode('utf-8')
-
-    def __str__(self):
-        return '%u: %s -> %u' % (self.id, self.name, self.value)
-
 class Connector:
-    def __init__(self, device, id):
+    status = {
+        DRM_MODE_CONNECTED: 'connected',
+        DRM_MODE_DISCONNECTED: 'disconnected',
+        DRM_MODE_UNKNOWNCONNECTION: 'unknown',
+    }
+
+    types = {
+        DRM_MODE_CONNECTOR_Unknown: 'unknown',
+        DRM_MODE_CONNECTOR_VGA: 'VGA',
+        DRM_MODE_CONNECTOR_DVII: 'DVI-I',
+        DRM_MODE_CONNECTOR_DVID: 'DVI-D',
+        DRM_MODE_CONNECTOR_DVIA: 'DVI-A',
+        DRM_MODE_CONNECTOR_Composite: 'composite',
+        DRM_MODE_CONNECTOR_SVIDEO: 's-video',
+        DRM_MODE_CONNECTOR_LVDS: 'LVDS',
+        DRM_MODE_CONNECTOR_Component: 'component',
+        DRM_MODE_CONNECTOR_9PinDIN: '9-pin DIN',
+        DRM_MODE_CONNECTOR_DisplayPort: 'DP',
+        DRM_MODE_CONNECTOR_HDMIA: 'HDMI-A',
+        DRM_MODE_CONNECTOR_HDMIB: 'HDMI-B',
+        DRM_MODE_CONNECTOR_TV: 'TV',
+        DRM_MODE_CONNECTOR_eDP: 'eDP',
+        DRM_MODE_CONNECTOR_VIRTUAL: 'Virtual',
+        DRM_MODE_CONNECTOR_DSI: 'DSI',
+        DRM_MODE_CONNECTOR_DPI: 'DPI',
+        DRM_MODE_CONNECTOR_WRITEBACK: 'WRITEBACK',
+    }
+
+    def __init__(self, device, connector_id):
         self.device = device
-        self.id = id
+        self.id = connector_id
+        self.encoder = None
 
         self.encoders = []
+        self.modes = []
+        self.properties = []
 
         args = drm_mode_get_connector()
-        args.connector_id = id
+        args.connector_id = self.id
 
         device.ioctl(DRM_IOCTL_MODE_GETCONNECTOR, args)
-
-        print('connector:', id)
-        print('  encoders:', args.count_encoders)
-        print('  properties:', args.count_props)
-        print('  modes:', args.count_modes)
 
         if args.count_encoders > 0:
             encoders = (ctypes.c_uint32 * args.count_encoders)()
@@ -396,35 +607,64 @@ class Connector:
 
         device.ioctl(DRM_IOCTL_MODE_GETCONNECTOR, args)
 
-        if args.count_encoders > 0:
-            print('  encoders: %u' % args.count_encoders)
+        self.name = '%s-%u' % (Connector.types[args.connector_type],
+                               args.connector_type_id)
+        self.status = Connector.status[args.connection]
+        self.width = args.mm_width
+        self.height = args.mm_height
 
+        if args.count_encoders > 0:
             for encoder_id in encoders:
                 for encoder in device.encoders:
                     if encoder.id == encoder_id:
                         self.encoders.append(encoder)
-                        print('    %s' % encoder)
                         break
                 else:
-                    print('    %u: unknown' % encoder_id)
+                    raise NotFound('no encoder with ID %u' % encoder_id)
+
+        for encoder in self.encoders:
+            if encoder.id == args.encoder_id:
+                self.encoder = encoder
 
         if args.count_modes > 0:
-            print('  modes: %u' % args.count_modes)
-
             for mode in modes:
-                print('    %s' % mode)
+                self.modes.append(mode)
 
         if args.count_props > 0:
-            print('  properties: %u' % args.count_props)
-
             for prop_id, value in zip(props, prop_values):
-                prop = Property(device, prop_id, value)
-                print('    %s' % prop)
+                prop = device.get_property(prop_id, value)
+                self.properties.append(prop)
+
+    def __str__(self):
+        return '%u: %s (%ux%u mm, %s)' % (self.id, self.name, self.width,
+                                       self.height, self.status)
 
     def __repr__(self):
         return '%u' % self.id
 
+DRM_MODE_ENCODER_NONE = 0
+DRM_MODE_ENCODER_DAC = 1
+DRM_MODE_ENCODER_TMDS = 2
+DRM_MODE_ENCODER_LVDS = 3
+DRM_MODE_ENCODER_TVDAC = 4
+DRM_MODE_ENCODER_VIRTUAL = 5
+DRM_MODE_ENCODER_DSI = 6
+DRM_MODE_ENCODER_DPMST = 7
+DRM_MODE_ENCODER_DPI = 8
+
 class Encoder:
+    types = {
+        DRM_MODE_ENCODER_NONE: 'NONE',
+        DRM_MODE_ENCODER_DAC: 'DAC',
+        DRM_MODE_ENCODER_TMDS: 'TMDS',
+        DRM_MODE_ENCODER_LVDS: 'LVDS',
+        DRM_MODE_ENCODER_TVDAC: 'TVDAC',
+        DRM_MODE_ENCODER_VIRTUAL: 'VIRTUAL',
+        DRM_MODE_ENCODER_DSI: 'DSI',
+        DRM_MODE_ENCODER_DPMST: 'DPMST',
+        DRM_MODE_ENCODER_DPI: 'DPI',
+    }
+
     def __init__(self, device, id):
         self.device = device
         self.id = id
@@ -437,30 +677,8 @@ class Encoder:
         self.type = args.encoder_type
         self.crtc = args.crtc_id
 
-        DRM_MODE_ENCODER_NONE = 0
-        DRM_MODE_ENCODER_DAC = 1
-        DRM_MODE_ENCODER_TMDS = 2
-        DRM_MODE_ENCODER_LVDS = 3
-        DRM_MODE_ENCODER_TVDAC = 4
-        DRM_MODE_ENCODER_VIRTUAL = 5
-        DRM_MODE_ENCODER_DSI = 6
-        DRM_MODE_ENCODER_DPMST = 7
-        DRM_MODE_ENCODER_DPI = 8
-
-        encoder_types = {
-            DRM_MODE_ENCODER_NONE: 'NONE',
-            DRM_MODE_ENCODER_DAC: 'DAC',
-            DRM_MODE_ENCODER_TMDS: 'TMDS',
-            DRM_MODE_ENCODER_LVDS: 'LVDS',
-            DRM_MODE_ENCODER_TVDAC: 'TVDAC',
-            DRM_MODE_ENCODER_VIRTUAL: 'VIRTUAL',
-            DRM_MODE_ENCODER_DSI: 'DSI',
-            DRM_MODE_ENCODER_DPMST: 'DPMST',
-            DRM_MODE_ENCODER_DPI: 'DPI',
-        }
-
-        if args.encoder_type in encoder_types:
-            self.name = '%s:%u' % (encoder_types[args.encoder_type], self.id)
+        if args.encoder_type in Encoder.types:
+            self.name = '%s' % Encoder.types[self.type]
         else:
             self.name = 'UNKNOWN'
 
@@ -535,15 +753,15 @@ class Device:
 
         self.ioctl(DRM_IOCTL_GET_CAP, args)
 
-        if cap == CAP_DUMB_BUFFER or \
-           cap == CAP_VBLANK_HIGH_CRTC or \
-           cap == CAP_DUMB_PREFER_SHADOW or \
-           cap == CAP_TIMESTAMP_MONOTONIC or \
-           cap == CAP_ASYNC_PAGE_FLIP or \
-           cap == CAP_ADDFB2_MODIFIERS or \
-           cap == CAP_PAGE_FLIP_TARGET or \
-           cap == CAP_CRTC_IN_VBLANK_EVENT or \
-           cap == CAP_SYNCOBJ:
+        if cap == DRM_CAP_DUMB_BUFFER or \
+           cap == DRM_CAP_VBLANK_HIGH_CRTC or \
+           cap == DRM_CAP_DUMB_PREFER_SHADOW or \
+           cap == DRM_CAP_TIMESTAMP_MONOTONIC or \
+           cap == DRM_CAP_ASYNC_PAGE_FLIP or \
+           cap == DRM_CAP_ADDFB2_MODIFIERS or \
+           cap == DRM_CAP_PAGE_FLIP_TARGET or \
+           cap == DRM_CAP_CRTC_IN_VBLANK_EVENT or \
+           cap == DRM_CAP_SYNCOBJ:
             return args.value != 0
 
         return args.value
@@ -579,17 +797,15 @@ class Device:
 
         return args.handle
 
-    def get_property(self, prop_id):
+    def get_property(self, prop_id, value):
         args = drm_mode_get_property()
         args.prop_id = prop_id
 
         self.ioctl(DRM_IOCTL_MODE_GETPROPERTY, args)
 
-        print('property: %u' % args.prop_id)
-        print('  name: %s' % args.name.decode('utf-8'))
-        print('  flags: %x' % args.flags)
-        print('  count_values: %u' % args.count_values)
-        print('  count_enum_blobs: %u' % args.count_enum_blobs)
+        name = args.name.decode('utf-8')
+        flags = get_flags(args.flags)
+        prop = None
 
         if args.count_values > 0:
             values = (ctypes.c_uint64 * args.count_values)()
@@ -610,40 +826,41 @@ class Device:
         device.ioctl(DRM_IOCTL_MODE_GETPROPERTY, args)
 
         if args.flags & DRM_MODE_PROP_PENDING:
-            pass
+            raise NotImplemented('unable to parse pending properties')
 
         if args.flags & DRM_MODE_PROP_RANGE:
-            pass
+            return PropertyRange(prop_id, name, flags, values[0], values[1])
+
+        if args.flags & DRM_MODE_PROP_ENUM:
+            enums = {}
+
+            for blob in blobs:
+                enum = blob.name.decode('utf-8')
+                enums[enum] = blob.value
+
+            return PropertyEnum(prop_id, name, flags, enums)
 
         if args.flags & DRM_MODE_PROP_BLOB:
-            prop = PropertyBlob()
-
             if args.count_enum_blobs > 0:
-                print('  blobs: %u' % args.count_enum_blobs)
-
-                for blob_id in blobs:
-                    print('    %u' % blob_id)
-
-                print('  values: %u' % args.count_enum_blobs)
-
-                for value in values:
-                    print('    %u' % value)
+                raise NotImplemented('unable to parse %u enum blobs' %
+                                        args.count_enum_blobs)
             else:
-                self.blob = Blob(device, value)
+                blob = device.get_blob(value)
+
+            return PropertyBlob(prop_id, name, flags, blob)
 
         if args.flags & DRM_MODE_PROP_BITMASK:
-            pass
+            raise NotImplemented('unable to parse bitmask properties')
 
         prop_type = args.flags & DRM_MODE_PROP_EXTENDED_TYPE
 
         if prop_type == DRM_MODE_PROP_OBJECT:
-            pass
+            raise NotImplemented('unable to parse object properties')
 
         if prop_type == DRM_MODE_PROP_SIGNED_RANGE:
-            pass
+            raise NotImplemented('unable to parse signed range properties')
 
-        if args.flags & DRM_MODE_PROP_EXTENDED_TYPE
-        else:
+        if not prop:
             if args.count_values > 0:
                 print('  values: %u' % args.count_values)
 
@@ -662,6 +879,41 @@ class Device:
                 if args.count_enum_blobs > 0:
                     for blob in blobs:
                         self.values[blob.name] = blob.value
+
+        return prop
+
+    def get_blob(self, blob_id):
+        args = drm_mode_get_blob()
+        args.blob_id = blob_id
+        data = None
+
+        device.ioctl(DRM_IOCTL_MODE_GETPROPBLOB, args)
+
+        #print('  blob: %u' % blob_id)
+        #print('    length: %u bytes' % args.length)
+
+        if args.length > 0:
+            data = (ctypes.c_byte * args.length)()
+            args.data = data
+
+            device.ioctl(DRM_IOCTL_MODE_GETPROPBLOB, args)
+
+            data = bytes(data)
+
+        #print('    data:\n     ', end = '')
+        #count = 0
+
+        #for byte in self.data:
+        #    if count >= 16:
+        #        print('\n     ', end = '')
+        #        count = 0
+
+        #    print(' %02x' % byte, end = '')
+        #    count += 1
+
+        #print()
+
+        return Blob(blob_id, data)
 
     def get_resources(self):
         args = drm_mode_resources()
@@ -782,73 +1034,95 @@ if __name__ == '__main__':
             print('description:', v.desc)
 
             print('capabilities:')
-            print('  dumb buffers:', device.get_capability(CAP_DUMB_BUFFER))
-            print('  VBLANK high CRTC:', device.get_capability(CAP_VBLANK_HIGH_CRTC))
-            print('  preferred depth:', device.get_capability(CAP_DUMB_PREFERRED_DEPTH))
-            print('  prefer shadow:', device.get_capability(CAP_DUMB_PREFER_SHADOW))
+            print('  dumb buffers:', device.get_capability(DRM_CAP_DUMB_BUFFER))
+            print('  VBLANK high CRTC:', device.get_capability(DRM_CAP_VBLANK_HIGH_CRTC))
+            print('  preferred depth:', device.get_capability(DRM_CAP_DUMB_PREFERRED_DEPTH))
+            print('  prefer shadow:', device.get_capability(DRM_CAP_DUMB_PREFER_SHADOW))
 
-            prime = device.get_capability(CAP_PRIME)
+            prime = device.get_capability(DRM_CAP_PRIME)
             flags = []
 
-            if prime & CAP_PRIME_IMPORT:
+            if prime & DRM_CAP_PRIME_IMPORT:
                 flags.append('import')
 
-            if prime & CAP_PRIME_EXPORT:
+            if prime & DRM_CAP_PRIME_EXPORT:
                 flags.append('export')
 
             print('  PRIME:', ', '.join(flags))
-            print('  timestamp monotonic:', device.get_capability(CAP_TIMESTAMP_MONOTONIC))
-            print('  async page flip:', device.get_capability(CAP_ASYNC_PAGE_FLIP))
+            print('  timestamp monotonic:', device.get_capability(DRM_CAP_TIMESTAMP_MONOTONIC))
+            print('  async page flip:', device.get_capability(DRM_CAP_ASYNC_PAGE_FLIP))
 
-            width = device.get_capability(CAP_CURSOR_WIDTH)
-            height = device.get_capability(CAP_CURSOR_HEIGHT)
+            width = device.get_capability(DRM_CAP_CURSOR_WIDTH)
+            height = device.get_capability(DRM_CAP_CURSOR_HEIGHT)
             print('  cursor: %ux%u' % (width, height))
 
-            print('  framebuffer modifiers:', device.get_capability(CAP_ADDFB2_MODIFIERS))
-            print('  page flip target:', device.get_capability(CAP_PAGE_FLIP_TARGET))
-            print('  CRTC in VBLANK event:', device.get_capability(CAP_CRTC_IN_VBLANK_EVENT))
-            print('  Sync objects:', device.get_capability(CAP_SYNCOBJ))
+            print('  framebuffer modifiers:', device.get_capability(DRM_CAP_ADDFB2_MODIFIERS))
+            print('  page flip target:', device.get_capability(DRM_CAP_PAGE_FLIP_TARGET))
+            print('  CRTC in VBLANK event:', device.get_capability(DRM_CAP_CRTC_IN_VBLANK_EVENT))
+            print('  Sync objects:', device.get_capability(DRM_CAP_SYNCOBJ))
 
-            device.set_capability(CLIENT_CAP_UNIVERSAL_PLANES, True)
-
+            device.set_capability(DRM_CLIENT_CAP_UNIVERSAL_PLANES, True)
             device.get_resources()
 
-#            if device.framebuffers:
-#                print('Framebuffers:')
-#
-#                for fb in device.framebuffers:
-#                    print(' ', fb)
-#
-#            if device.crtcs:
-#                print('CRTCs:')
-#
-#                for crtc in device.crtcs:
-#                    print(' ', crtc)
-#
-#            if device.connectors:
-#                print('Connectors:')
-#
-#                for connector in device.connectors:
-#                    print(' ', connector)
-#
-#            if device.encoders:
-#                print('Encoders:')
-#
-#                for encoder in device.encoders:
-#                    print(' ', encoder)
-#
-#            if device.planes:
-#                print('Planes:')
-#
-#                for plane in device.planes:
-#                    print('    CRTC: %u (possible: %x)' % (plane.crtc, plane.possible_crtcs))
-#                    print('    FB:', plane.fb)
-#                    print('    gamma size:', plane.gamma_size)
-#
-#                    count = len(plane.formats)
-#
-#                    print(' ', plane)
-#                    print('    %u format%s:' % (count, 's' if count > 1 else ''))
-#
-#                    for fmt in plane.formats:
-#                        print('     ', fmt)
+            if device.connectors:
+                print('connectors:')
+
+                for connector in device.connectors:
+                    print('  %s' % connector)
+
+                    if connector.modes:
+                        print('    modes:')
+
+                        for mode in connector.modes:
+                            flags = ', '.join(mode.get_flags())
+                            types = ', '.join(mode.get_types())
+
+                            if flags:
+                                flags = ' flags: %s' % flags
+
+                            if types:
+                                types = ' type: %s' % types
+
+                            print('      %s%s%s' % (mode, flags, types))
+
+                    print('    encoders:')
+
+                    for encoder in connector.encoders:
+                        if encoder == connector.encoder:
+                            print('    * %s' % encoder)
+                        else:
+                            print('      %s' % encoder)
+
+            if device.encoders:
+                print('encoders:')
+
+                for encoder in device.encoders:
+                    print('  %s' % encoder)
+
+            if device.crtcs:
+                print('CRTCs:')
+
+                for crtc in device.crtcs:
+                    print('  %s' % crtc)
+
+            if device.framebuffers:
+                print('Framebuffers:')
+
+                for fb in device.framebuffers:
+                    print(' ', fb)
+
+            if device.planes:
+                print('Planes:')
+
+                for plane in device.planes:
+                    print('    CRTC: %u (possible: %x)' % (plane.crtc, plane.possible_crtcs))
+                    print('    FB:', plane.fb)
+                    print('    gamma size:', plane.gamma_size)
+
+                    count = len(plane.formats)
+
+                    print(' ', plane)
+                    print('    %u format%s:' % (count, 's' if count > 1 else ''))
+
+                    for fmt in plane.formats:
+                        print('     ', fmt)
