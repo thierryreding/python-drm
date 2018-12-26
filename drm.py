@@ -11,6 +11,11 @@ IOC_SIZE_SHIFT = 16
 IOC_TYPE_SHIFT = 8
 IOC_NR_SHIFT = 0
 
+def set_bits(x, num_bits):
+    for bit in range(0, num_bits):
+        if x & (1 << bit):
+            yield bit
+
 def IOC(dir, type, nr, size):
     return dir << IOC_DIR_SHIFT | size << IOC_SIZE_SHIFT | type << IOC_TYPE_SHIFT | nr << IOC_NR_SHIFT
 
@@ -505,8 +510,9 @@ class Framebuffer:
         return '%u' % self.id
 
 class CRTC:
-    def __init__(self, device, crtc_id):
+    def __init__(self, device, index, crtc_id):
         self.device = device
+        self.index = index
         self.id = crtc_id
 
         args = drm_mode_crtc()
@@ -518,31 +524,6 @@ class CRTC:
             self.mode = args.mode
         else:
             self.mode = None
-
-        print('count_connectors:', args.count_connectors)
-        print('crtc_id:', args.crtc_id)
-        print('fb_id:', args.fb_id)
-        print('x: %u y: %u' % (args.x, args.y))
-        print('gamma size: %u' % args.gamma_size)
-        print('mode valid:', args.mode_valid)
-
-        if args.mode_valid:
-            print('mode:', args.mode)
-            print('  clock:', args.mode.clock)
-            print('  hdisplay:', args.mode.hdisplay)
-            print('  hsync_start:', args.mode.hsync_start)
-            print('  hsync_end:', args.mode.hsync_end)
-            print('  htotal:', args.mode.htotal)
-            print('  hskew:', args.mode.hskew)
-            print('  vdisplay:', args.mode.vdisplay)
-            print('  vsync_start:', args.mode.vsync_start)
-            print('  vsync_end:', args.mode.vsync_end)
-            print('  vtotal:', args.mode.vtotal)
-            print('  vscan:', args.mode.vscan)
-            print('  vrefresh:', args.mode.vrefresh)
-            print('  flags:', args.mode.flags)
-            print('  type:', args.mode.type)
-            print('  name:', args.mode.name)
 
     def __repr__(self):
         return '%u' % self.id
@@ -665,8 +646,9 @@ class Encoder:
         DRM_MODE_ENCODER_DPI: 'DPI',
     }
 
-    def __init__(self, device, id):
+    def __init__(self, device, index, id):
         self.device = device
+        self.index = index
         self.id = id
 
         args = drm_mode_get_encoder()
@@ -675,7 +657,21 @@ class Encoder:
         device.ioctl(DRM_IOCTL_MODE_GETENCODER, args)
 
         self.type = args.encoder_type
-        self.crtc = args.crtc_id
+        self.possible_crtcs = []
+        # need to resolve these later
+        self.possible_clones = args.possible_clones
+
+        for crtc in device.crtcs:
+            if crtc.id == args.crtc_id:
+                self.crtc = crtc
+                break
+        else:
+            self.crtc = None
+
+        for bit in set_bits(args.possible_crtcs, 32):
+            for crtc in device.crtcs:
+                if crtc.index == bit:
+                    self.possible_crtcs.append(crtc)
 
         if args.encoder_type in Encoder.types:
             self.name = '%s' % Encoder.types[self.type]
@@ -845,7 +841,10 @@ class Device:
                 raise NotImplemented('unable to parse %u enum blobs' %
                                         args.count_enum_blobs)
             else:
-                blob = device.get_blob(value)
+                if value > 0:
+                    blob = device.get_blob(value)
+                else:
+                    blob = None
 
             return PropertyBlob(prop_id, name, flags, blob)
 
@@ -953,14 +952,31 @@ class Device:
                 self.framebuffers.append(fb)
 
         if args.count_crtcs > 0:
+            index = 0
+
             for crtc in crtcs:
-                crtc = CRTC(self, crtc)
+                crtc = CRTC(self, index, crtc)
                 self.crtcs.append(crtc)
+                index = index + 1
 
         if args.count_encoders > 0:
+            index = 0
+
             for encoder in encoders:
-                encoder = Encoder(self, encoder)
+                encoder = Encoder(self, index, encoder)
                 self.encoders.append(encoder)
+                index = index + 1
+
+            # resolve possible clones
+            for encoder in self.encoders:
+                possible_clones = []
+
+                for bit in set_bits(encoder.possible_clones, 32):
+                    for clone in self.encoders:
+                        if clone.index == bit:
+                            possible_clones.append(clone)
+
+                encoder.possible_clones = possible_clones
 
         if args.count_connectors > 0:
             for connector in connectors:
@@ -1098,6 +1114,18 @@ if __name__ == '__main__':
 
                 for encoder in device.encoders:
                     print('  %s' % encoder)
+                    print('    CRTCs:')
+
+                    for crtc in encoder.possible_crtcs:
+                        if crtc == encoder.crtc:
+                            print('    * %s' % crtc)
+                        else:
+                            print('      %s' % crtc)
+
+                    print('    Clones:')
+
+                    for clone in encoder.possible_clones:
+                        print('      %s' % clone)
 
             if device.crtcs:
                 print('CRTCs:')
