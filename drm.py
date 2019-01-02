@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import ctypes, fcntl, os, os.path
+import ctypes, enum, fcntl, os, os.path
 
 IOC_NONE = 0
 IOC_WRITE = 1
@@ -312,6 +312,25 @@ class drm_mode_get_property(ctypes.Structure):
         ('count_enum_blobs', ctypes.c_uint32)
     ]
 
+DRM_MODE_OBJECT_CRTC = 0xcccccccc
+DRM_MODE_OBJECT_CONNECTOR = 0xc0c0c0c0
+DRM_MODE_OBJECT_ENCODER = 0xe0e0e0e0
+DRM_MODE_OBJECT_MODE = 0xdededede
+DRM_MODE_OBJECT_PROPERTY = 0xb0b0b0b0
+DRM_MODE_OBJECT_FB = 0xfbfbfbfb
+DRM_MODE_OBJECT_BLOB = 0xbbbbbbbb
+DRM_MODE_OBJECT_PLANE = 0xeeeeeeee
+DRM_MODE_OBJECT_ANY = 0x00000000
+
+class drm_mode_obj_get_properties(ctypes.Structure):
+    _fields_ = [
+        ('props_ptr', ctypes.POINTER(ctypes.c_uint32)),
+        ('prop_values_ptr', ctypes.POINTER(ctypes.c_uint64)),
+        ('count_props', ctypes.c_uint32),
+        ('obj_id', ctypes.c_uint32),
+        ('obj_type', ctypes.c_uint32)
+    ]
+
 class drm_mode_get_blob(ctypes.Structure):
     _fields_ = [
         ('blob_id', ctypes.c_uint32),
@@ -358,6 +377,7 @@ DRM_IOCTL_MODE_GETPROPERTY = DRM_IOWR(0xaa, drm_mode_get_property)
 DRM_IOCTL_MODE_GETPROPBLOB = DRM_IOWR(0xac, drm_mode_get_blob)
 DRM_IOCTL_MODE_GETPLANERESOURCES = DRM_IOWR(0xb5, drm_mode_plane_resources)
 DRM_IOCTL_MODE_GETPLANE = DRM_IOWR(0xb6, drm_mode_get_plane)
+DRM_IOCTL_MODE_OBJ_GETPROPERTIES = DRM_IOWR(0xb9, drm_mode_obj_get_properties)
 
 def get_flags(value):
     flags = []
@@ -463,13 +483,14 @@ class PropertyRange(Property):
         return '%u: %s (range: %d-%d)' % (self.id, self.name, self.min, self.max)
 
 class PropertyEnum(Property):
-    def __init__(self, prop_id, name, flags, enums):
+    def __init__(self, prop_id, name, flags, enums, value):
         super().__init__(prop_id, name, flags)
 
-        self.enums = enums
+        self.type = enum.Enum(name, enums)
+        self.value = self.type(value)
 
     def __str__(self):
-        return '%u: %s (enum: %s)' % (self.id, self.name, self.enums)
+        return '%u: %s (enum: %s)' % (self.id, self.name, self.type)
 
 class PropertyBlob(Property):
     def __init__(self, prop_id, name, flags, blob):
@@ -688,17 +709,14 @@ class Plane:
     def __init__(self, device, id):
         self.device = device
         self.id = id
+        self.crtcs = []
         self.formats = []
+        self.properties = []
 
         args = drm_mode_get_plane()
         args.plane_id = id
 
         device.ioctl(DRM_IOCTL_MODE_GETPLANE, args)
-
-        self.crtc = args.crtc_id
-        self.fb = args.fb_id
-        self.possible_crtcs = args.possible_crtcs
-        self.gamma_size = args.gamma_size
 
         if args.count_format_types > 0:
             formats = (ctypes.c_uint32 * args.count_format_types)()
@@ -706,9 +724,41 @@ class Plane:
 
         device.ioctl(DRM_IOCTL_MODE_GETPLANE, args)
 
+        for bit in set_bits(args.possible_crtcs, 32):
+            for crtc in device.crtcs:
+                if crtc.index == bit:
+                    self.crtcs.append(crtc)
+
+        for crtc in self.crtcs:
+            if crtc.id == args.crtc_id:
+                self.crtc = crtc
+                break
+        else:
+            self.crtc = None
+
         for fmt in formats:
             fmt = Format(fmt)
             self.formats.append(fmt)
+
+        args = drm_mode_obj_get_properties()
+        args.obj_type = DRM_MODE_OBJECT_PLANE
+        args.obj_id = id
+
+        device.ioctl(DRM_IOCTL_MODE_OBJ_GETPROPERTIES, args)
+
+        if args.count_props > 0:
+            props = (ctypes.c_uint32 * args.count_props)()
+            args.props_ptr = props
+
+            values = (ctypes.c_uint64 * args.count_props)()
+            args.prop_values_ptr = values
+
+        device.ioctl(DRM_IOCTL_MODE_OBJ_GETPROPERTIES, args)
+
+        if args.count_props > 0:
+            for prop, value in zip(props, values):
+                prop = device.get_property(prop, value)
+                self.properties.append(prop)
 
     def __repr__(self):
         return '%u' % self.id
@@ -821,6 +871,16 @@ class Device:
 
         device.ioctl(DRM_IOCTL_MODE_GETPROPERTY, args)
 
+        if 0:
+            print('property: value %s' % value)
+            print('  values_ptr:', args.values_ptr)
+            print('  enum_blob_ptr:', args.enum_blob_ptr)
+            print('  prop_id:', args.prop_id)
+            print('  flags:', args.flags)
+            print('  name:', args.name)
+            print('  count_values:', args.count_values)
+            print('  count_enum_blobs:', args.count_enum_blobs)
+
         if args.flags & DRM_MODE_PROP_PENDING:
             raise NotImplemented('unable to parse pending properties')
 
@@ -834,7 +894,7 @@ class Device:
                 enum = blob.name.decode('utf-8')
                 enums[enum] = blob.value
 
-            return PropertyEnum(prop_id, name, flags, enums)
+            return PropertyEnum(prop_id, name, flags, enums, value)
 
         if args.flags & DRM_MODE_PROP_BLOB:
             if args.count_enum_blobs > 0:
@@ -1109,6 +1169,20 @@ if __name__ == '__main__':
                         else:
                             print('      %s' % encoder)
 
+                    print('    properties:')
+
+                    for prop in connector.properties:
+                        if isinstance(prop, PropertyEnum):
+                            print('      %u: %s' % (prop.id, prop.name))
+
+                            for enum in prop.type:
+                                if enum is prop.value:
+                                    print('      * %u: %s' % (enum.value, enum.name))
+                                else:
+                                    print('        %u: %s' % (enum.value, enum.name))
+                        else:
+                            print('      %s' % prop)
+
             if device.encoders:
                 print('encoders:')
 
@@ -1143,14 +1217,34 @@ if __name__ == '__main__':
                 print('Planes:')
 
                 for plane in device.planes:
-                    print('    CRTC: %u (possible: %x)' % (plane.crtc, plane.possible_crtcs))
-                    print('    FB:', plane.fb)
-                    print('    gamma size:', plane.gamma_size)
+                    print('  %s' % plane)
+                    print('    CRTCs:')
+
+                    for crtc in plane.crtcs:
+                        if crtc == plane.crtc:
+                            print('    * %s' % crtc)
+                        else:
+                            print('      %s' % crtc)
 
                     count = len(plane.formats)
 
-                    print(' ', plane)
                     print('    %u format%s:' % (count, 's' if count > 1 else ''))
 
                     for fmt in plane.formats:
                         print('     ', fmt)
+
+                    count = len(plane.properties)
+
+                    print('    %u propert%s:' % (count, 'y' if count == 1 else 'ies'))
+
+                    for prop in plane.properties:
+                        if isinstance(prop, PropertyEnum):
+                            print('      %u: %s' % (prop.id, prop.name))
+
+                            for enum in prop.type:
+                                if enum is prop.value:
+                                    print('      * %u: %s' % (enum.value, enum.name))
+                                else:
+                                    print('        %u: %s' % (enum.value, enum.name))
+                        else:
+                            print('      %s' % prop)
