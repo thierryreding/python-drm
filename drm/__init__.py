@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-import ctypes, enum, fcntl, os, os.path
+import ctypes, enum, fcntl, mmap, os, os.path
 
 IOC_NONE = 0
 IOC_WRITE = 1
@@ -72,6 +72,111 @@ DRM_MODE_TYPE_PREFERRED = 1 << 3
 DRM_MODE_TYPE_DEFAULT = 1 << 4
 DRM_MODE_TYPE_USERDEF = 1 << 5
 DRM_MODE_TYPE_DRIVER = 1 << 6
+
+class Component:
+    def __init__(self, shift, width):
+        self.shift = shift
+        self.width = width
+
+class RGBA:
+    def __init__(self, red, green, blue, alpha):
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.alpha = alpha
+
+class Format(enum.IntEnum):
+    def __new__(cls, a, b, c, d, num_planes, cpp, hsub, vsub, components = None):
+        value = (ord(d) << 24) | (ord(c) << 16) | (ord(b) << 8) | ord(a)
+        fourcc = a + b + c + d
+
+        obj = int.__new__(cls, value)
+        obj.fourcc = fourcc.strip()
+        obj.num_planes = num_planes
+        obj.cpp = cpp
+        obj.hsub = hsub
+        obj.vsub = vsub
+        obj.components = components
+
+        obj._value_ = value
+        return obj
+
+    def __repr__(self):
+        return '<%s: %#08x>' % (self.name, self.value)
+
+    def __str__(self):
+        return '%s' % self.fourcc
+
+    def pixel(self, red, green, blue, alpha):
+        if isinstance(self.components, RGBA):
+            r = self.components.red
+            g = self.components.green
+            b = self.components.blue
+            a = self.components.alpha
+
+            value = 0
+
+            mask = (1 << r.width) - 1
+            value |= int(red * mask) << r.shift
+
+            mask = (1 << g.width) - 1
+            value |= int(green * mask) << g.shift
+
+            mask = (1 << b.width) - 1
+            value |= int(blue * mask) << b.shift
+
+            mask = (1 << a.width) - 1
+            value |= int(alpha * mask) << a.shift
+
+            return value.to_bytes(self.cpp[0], byteorder = 'little')
+
+        return Exception()
+
+    C8       = ('C', '8', ' ', ' ', 1, [1, 0, 0], 1, 1)
+    RGB565   = ('R', 'G', '1', '6', 1, [2, 0, 0], 1, 1, RGBA(Component(11, 5), Component(5, 6), Component(0, 5), Component(0, 0)))
+    XRGB1555 = ('X', 'R', '1', '5', 1, [2, 0, 0], 1, 1, RGBA(Component(10, 5), Component(5, 5), Component(0, 5), Component(15, 1)))
+    XRGB8888 = ('X', 'R', '2', '4', 1, [4, 0, 0], 1, 1, RGBA(Component(16, 8), Component(8, 8), Component(0, 8), Component(24, 8)))
+    ARGB8888 = ('A', 'R', '2', '4', 1, [4, 0, 0], 1, 1, RGBA(Component(0, 8), Component(8, 8), Component(16, 8), Component(24, 8)))
+    YUV420   = (' ', ' ', ' ', ' ', 3, [1, 1, 1], 2, 2)
+
+class Vendor(enum.IntEnum):
+    NONE = 0
+    INTEL = 1
+    AMD = 2
+    NVIDIA = 3
+    SAMSUNG = 4
+    QCOM = 5
+    VIVANTE = 6
+    BROADCOM = 7
+    ARM = 8
+
+class Modifier(enum.IntEnum):
+    def __new__(cls, vendor, code):
+        value = ((vendor & 0xff) << 56) | (code & 0xffffffffffffff)
+        obj = int.__new__(cls, value)
+        obj._value_ = value
+        return obj
+
+    INVALID = (Vendor.NONE, 0xffffffffffffff)
+    LINEAR = (Vendor.NONE, 0)
+    INTEL_X_TILED = (Vendor.INTEL, 1)
+    INTEL_Y_TILED = (Vendor.INTEL, 2)
+    INTEL_Yf_TILED = (Vendor.INTEL, 3)
+    INTEL_Y_TILED_CCS = (Vendor.INTEL, 4)
+    INTEL_Yf_TILED_CCS = (Vendor.INTEL, 4)
+    NVIDIA_TEGRA_TILED = (Vendor.NVIDIA, 1)
+    NVIDIA_16BX2_BLOCK_ONE_GOB = (Vendor.NVIDIA, 0x10)
+    NVIDIA_16BX2_BLOCK_TWO_GOB = (Vendor.NVIDIA, 0x11)
+    NVIDIA_16BX2_BLOCK_FOUR_GOB = (Vendor.NVIDIA, 0x12)
+    NVIDIA_16BX2_BLOCK_EIGHT_GOB = (Vendor.NVIDIA, 0x13)
+    NVIDIA_16BX2_BLOCK_SIXTEEN_GOB = (Vendor.NVIDIA, 0x14)
+    NVIDIA_16BX2_BLOCK_THIRTYTWO_GOB = (Vendor.NVIDIA, 0x15)
+    SAMSUNG_64_32_TILE = (Vendor.SAMSUNG, 1)
+    QCOM_COMPRESSED = (Vendor.QCOM, 1)
+    VIVANTE_TILED = (Vendor.VIVANTE, 1)
+    VIVANTE_SUPER_TILED = (Vendor.VIVANTE, 2)
+    VIVANTE_SPLIT_TILED = (Vendor.VIVANTE, 3)
+    VIVANTE_SPLIT_SUPER_TILED = (Vendor.VIVANTE, 4)
 
 class drm_mode_info(ctypes.Structure):
     _fields_ = [
@@ -292,6 +397,22 @@ class drm_mode_get_plane(ctypes.Structure):
         ('format_type_ptr', ctypes.POINTER(ctypes.c_uint32))
     ]
 
+class drm_mode_set_plane(ctypes.Structure):
+    _fields_ = [
+        ('plane_id', ctypes.c_uint32),
+        ('crtc_id', ctypes.c_uint32),
+        ('fb_id', ctypes.c_uint32),
+        ('flags', ctypes.c_uint32),
+        ('crtc_x', ctypes.c_int32),
+        ('crtc_y', ctypes.c_int32),
+        ('crtc_w', ctypes.c_uint32),
+        ('crtc_h', ctypes.c_uint32),
+        ('src_x', ctypes.c_uint32),
+        ('src_y', ctypes.c_uint32),
+        ('src_h', ctypes.c_uint32),
+        ('src_w', ctypes.c_uint32)
+    ]
+
 class drm_mode_property_enum(ctypes.Structure):
     _fields_ = [
         ('value', ctypes.c_uint64),
@@ -351,6 +472,60 @@ class drm_mode_crtc(ctypes.Structure):
         ('mode', drm_mode_info)
     ]
 
+class drm_mode_create_dumb(ctypes.Structure):
+    _fields_ = [
+        ('height', ctypes.c_uint32),
+        ('width', ctypes.c_uint32),
+        ('bpp', ctypes.c_uint32),
+        ('flags', ctypes.c_uint32),
+        ('handle', ctypes.c_uint32),
+        ('pitch', ctypes.c_uint32),
+        ('size', ctypes.c_uint32)
+    ]
+
+class drm_mode_map_dumb(ctypes.Structure):
+    _fields_ = [
+        ('handle', ctypes.c_uint32),
+        ('pad', ctypes.c_uint32),
+        ('offset', ctypes.c_uint64)
+    ]
+
+class drm_mode_destroy_dumb(ctypes.Structure):
+    _fields_ = [
+        ('handle', ctypes.c_uint32)
+    ]
+
+class drm_mode_fb_cmd2(ctypes.Structure):
+    _fields_ = [
+        ('fb_id', ctypes.c_uint32),
+        ('width', ctypes.c_uint32),
+        ('height', ctypes.c_uint32),
+        ('pixel_format', ctypes.c_uint32),
+        ('flags', ctypes.c_uint32),
+        ('handles', ctypes.c_uint32 * 4),
+        ('pitches', ctypes.c_uint32 * 4),
+        ('offsets', ctypes.c_uint32 * 4),
+        ('modifier', ctypes.c_uint64 * 4)
+    ]
+
+class drm_format_modifier_blob(ctypes.Structure):
+    _fields_ = [
+        ('version', ctypes.c_uint32),
+        ('flags', ctypes.c_uint32),
+        ('count_formats', ctypes.c_uint32),
+        ('formats_offset', ctypes.c_uint32),
+        ('count_modifiers', ctypes.c_uint32),
+        ('modifiers_offset', ctypes.c_uint32)
+    ]
+
+class drm_format_modifier(ctypes.Structure):
+    _fields_ = [
+        ('formats', ctypes.c_uint64),
+        ('offset', ctypes.c_uint32),
+        ('pad', ctypes.c_uint32),
+        ('modifier', ctypes.c_uint64)
+    ]
+
 DRM_IOCTL_BASE = ord('d')
 
 def DRM_IO(nr):
@@ -375,8 +550,13 @@ DRM_IOCTL_MODE_GETENCODER = DRM_IOWR(0xa6, drm_mode_get_encoder)
 DRM_IOCTL_MODE_GETCONNECTOR = DRM_IOWR(0xa7, drm_mode_get_connector)
 DRM_IOCTL_MODE_GETPROPERTY = DRM_IOWR(0xaa, drm_mode_get_property)
 DRM_IOCTL_MODE_GETPROPBLOB = DRM_IOWR(0xac, drm_mode_get_blob)
+DRM_IOCTL_MODE_CREATE_DUMB = DRM_IOWR(0xb2, drm_mode_create_dumb)
+DRM_IOCTL_MODE_MAP_DUMB = DRM_IOWR(0xb3, drm_mode_map_dumb)
+DRM_IOCTL_MODE_DESTROY_DUMB = DRM_IOWR(0xb4, drm_mode_destroy_dumb)
 DRM_IOCTL_MODE_GETPLANERESOURCES = DRM_IOWR(0xb5, drm_mode_plane_resources)
 DRM_IOCTL_MODE_GETPLANE = DRM_IOWR(0xb6, drm_mode_get_plane)
+DRM_IOCTL_MODE_SETPLANE = DRM_IOWR(0xb7, drm_mode_set_plane)
+DRM_IOCTL_MODE_ADDFB2 = DRM_IOWR(0xb8, drm_mode_fb_cmd2)
 DRM_IOCTL_MODE_OBJ_GETPROPERTIES = DRM_IOWR(0xb9, drm_mode_obj_get_properties)
 
 def get_flags(value):
@@ -410,24 +590,6 @@ class Version:
         self.name = version.name.decode()
         self.date = version.date.decode()
         self.desc = version.desc.decode()
-
-class Format:
-    def __init__(self, fmt):
-        self.fmt = fmt
-        self.name = ''
-
-        while True:
-            if fmt & 0xff == 0:
-                break
-
-            self.name += chr(fmt & 0xff)
-            fmt >>= 8
-
-    def __repr__(self):
-        return '%u' % self.fmt
-
-    def __str__(self):
-        return '%s' % self.name
 
 class Mode:
     def __init__(self, mode):
@@ -518,10 +680,6 @@ class PropertyObject(Property):
     def __str__(self):
         return '%u: %s -> %u' % (self.id, self.name, self.value)
 
-DRM_MODE_CONNECTED = 1
-DRM_MODE_DISCONNECTED = 2
-DRM_MODE_UNKNOWNCONNECTION = 3
-
 class Framebuffer:
     def __init__(self, device, id):
         self.device = device
@@ -550,11 +708,20 @@ class CRTC:
         return '%u' % self.id
 
 class Connector:
-    status = {
-        DRM_MODE_CONNECTED: 'connected',
-        DRM_MODE_DISCONNECTED: 'disconnected',
-        DRM_MODE_UNKNOWNCONNECTION: 'unknown',
-    }
+    class Status(enum.Enum):
+        CONNECTED = 1
+        DISCONNECTED = 2
+        UNKNOWN = 3
+
+        #def __str__(self):
+        #    if self is self.CONNECTED:
+        #        return 'connected'
+        #
+        #    if self is self.DISCONNECTED:
+        #        return 'disconnected'
+        #
+        #    if self is self.UNKNOWN:
+        #        return 'unknown'
 
     types = {
         DRM_MODE_CONNECTOR_Unknown: 'unknown',
@@ -611,7 +778,7 @@ class Connector:
 
         self.name = '%s-%u' % (Connector.types[args.connector_type],
                                args.connector_type_id)
-        self.status = Connector.status[args.connection]
+        self.status = Connector.Status(args.connection)
         self.width = args.mm_width
         self.height = args.mm_height
 
@@ -760,8 +927,53 @@ class Plane:
                 prop = device.get_property(prop, value)
                 self.properties.append(prop)
 
+        for prop in self.properties:
+            if prop.name == 'IN_FORMATS':
+                data = prop.blob.data
+                header = drm_format_modifier_blob.from_buffer_copy(data)
+
+                self.formats = {}
+
+                size = header.count_formats * 4
+                formats = data[header.formats_offset:header.formats_offset + size]
+                formats = (ctypes.c_uint32 * header.count_formats).from_buffer_copy(formats)
+
+                for fmt in formats:
+                    self.formats[Format(fmt)] = []
+
+                offset = header.modifiers_offset
+                count = header.count_modifiers
+                size = count * ctypes.sizeof(drm_format_modifier)
+                mods = data[offset:offset + size]
+
+                mods = (drm_format_modifier * count).from_buffer_copy(mods)
+
+                for mod in mods:
+                    for bit in set_bits(mod.formats, 64):
+                        fmt = Format(formats[mod.offset + bit])
+                        self.formats[fmt].append(Modifier(mod.modifier))
+
     def __repr__(self):
         return '%u' % self.id
+
+    def set(self, crtc, fb, flags, crtc_x, crtc_y, crtc_w, crtc_h, src_x, src_y, src_w, src_h):
+        args = drm_mode_set_plane()
+        args.plane_id = self.id
+        args.crtc_id = crtc.id
+        args.fb_id = fb.id
+        args.flags = flags
+
+        args.crtc_x = crtc_x
+        args.crtc_y = crtc_y
+        args.crtc_w = crtc_w
+        args.crtc_h = crtc_h
+
+        args.src_x = src_x << 16
+        args.src_y = src_y << 16
+        args.src_h = src_h << 16
+        args.src_w = src_w << 16
+
+        self.device.ioctl(DRM_IOCTL_MODE_SETPLANE, args)
 
 class Resolution:
     def __init__(self, width, height):
@@ -869,7 +1081,7 @@ class Device:
                 values = (ctypes.c_uint32 * args.count_enum_blobs)()
                 args.values_ptr = ctypes.addressof(values)
 
-        device.ioctl(DRM_IOCTL_MODE_GETPROPERTY, args)
+        self.ioctl(DRM_IOCTL_MODE_GETPROPERTY, args)
 
         if 0:
             print('property: value %s' % value)
@@ -902,7 +1114,7 @@ class Device:
                                         args.count_enum_blobs)
             else:
                 if value > 0:
-                    blob = device.get_blob(value)
+                    blob = self.get_blob(value)
                 else:
                     blob = None
 
@@ -946,7 +1158,7 @@ class Device:
         args.blob_id = blob_id
         data = None
 
-        device.ioctl(DRM_IOCTL_MODE_GETPROPBLOB, args)
+        self.ioctl(DRM_IOCTL_MODE_GETPROPBLOB, args)
 
         #print('  blob: %u' % blob_id)
         #print('    length: %u bytes' % args.length)
@@ -955,7 +1167,7 @@ class Device:
             data = (ctypes.c_byte * args.length)()
             args.data = data
 
-            device.ioctl(DRM_IOCTL_MODE_GETPROPBLOB, args)
+            self.ioctl(DRM_IOCTL_MODE_GETPROPBLOB, args)
 
             data = bytes(data)
 
@@ -1059,6 +1271,128 @@ class Device:
                 plane = Plane(self, plane)
                 self.planes.append(plane)
 
+    def create_dumb(self, width, height, bpp, flags):
+        args = drm_mode_create_dumb()
+        args.width = width
+        args.height = height
+        args.bpp = bpp
+        args.flags = flags
+
+        self.ioctl(DRM_IOCTL_MODE_CREATE_DUMB, args)
+
+        return DumbBuffer(self, width, height, args.handle, args.pitch, args.size)
+
+    def add_framebuffer(self, width, height, pixel_format, flags, objects,
+                        pitches, offsets, modifiers):
+        args = drm_mode_fb_cmd2()
+
+        args.width = width
+        args.height = height
+        args.pixel_format = pixel_format
+        args.flags = flags
+
+        if not isinstance(objects, list):
+            objects = [ objects ]
+
+        if not isinstance(pitches, list):
+            pitches = [ pitches ]
+
+        if not isinstance(offsets, list):
+            offsets = [ offsets ]
+
+        if not isinstance(modifiers, list):
+            modifiers = [ modifiers ]
+
+        elements = zip(objects, pitches, offsets, modifiers)
+
+        for i, (bo, pitch, offset, modifier) in enumerate(elements):
+            args.handles[i] = bo.handle
+            args.pitches[i] = pitch
+            args.offsets[i] = offset
+            args.modifier[i] = modifier
+
+        self.ioctl(DRM_IOCTL_MODE_ADDFB2, args)
+
+        return Framebuffer(self, args.fb_id)
+
+    def atomic_request(self):
+        return AtomicRequest(self)
+
+class drm_mode_atomic(ctypes.Structure):
+    _fields_ = [
+        ('flags', ctypes.c_uint32),
+        ('count_objs', ctypes.c_uint32),
+        ('objs_ptr', ctypes.POINTER(ctypes.c_uint32)),
+        ('count_props_ptr', ctypes.POINTER(ctypes.c_uint32)),
+        ('props_ptr', ctypes.POINTER(ctypes.c_uint32)),
+        ('prop_values_ptr', ctypes.POINTER(ctypes.c_uint64)),
+        ('reserved', ctypes.c_uint64),
+        ('user_data', ctypes.c_uint64),
+    ]
+
+class AtomicRequest:
+    def __init__(self, device):
+        self.device = device
+
+    def commit(self, flags):
+        args = drm_mode_atomic()
+        args.flags = flags
+        args.count_objs = 0
+        args.objs_ptr = None
+        args.count_props_ptr = None
+        args.props_ptr = None
+        args.prop_values_ptr = None
+        args.user_data = None
+
+        self.device.ioctl(DRM_IOCTL_MODE_ATOMIC, args)
+
+class GEMObject:
+    def __init__(self, device, handle, size):
+        self.device = device
+        self.handle = handle
+        self.size = size
+
+class DumbBuffer(GEMObject):
+    def __init__(self, device, width, height, handle, pitch, size):
+        super().__init__(device, handle, size)
+
+        self.width = width
+        self.height = height
+        self.pitch = pitch
+
+        self.mmap = None
+
+    def map(self):
+        if not self.mmap:
+            args = drm_mode_map_dumb()
+            args.handle = self.handle
+
+            self.device.ioctl(DRM_IOCTL_MODE_MAP_DUMB, args)
+
+            self.mmap = mmap.mmap(self.device.fd, self.size,
+                                  mmap.MAP_SHARED,
+                                  mmap.PROT_READ | mmap.PROT_WRITE,
+                                  mmap.ACCESS_DEFAULT, args.offset)
+
+        return self.mmap
+
+    def __del__(self):
+        if self.mmap:
+            self.mmap.close()
+
+        args = drm_mode_destroy_dumb()
+        args.handle = self.handle
+
+        self.device.ioctl(DRM_IOCTL_MODE_DESTROY_DUMB, args)
+
+    def __setitem__(self, key, value):
+        mmap = self.map()
+
+        x, y = key
+
+        offset = y * self.pitch + x * len(value)
+        mmap[offset:offset + len(value)] = value
+
 class DeviceNode:
     def open(self):
         return Device(self.path)
@@ -1097,154 +1431,3 @@ def devices():
             result.append(device)
 
     return result
-
-if __name__ == '__main__':
-    for node in devices():
-        if isinstance(node, CardDevice):
-            device = node.open()
-            v = device.version()
-
-            print('version: %u.%u.%u' % (v.major, v.minor, v.patch))
-            print('name:', v.name)
-            print('date:', v.date)
-            print('description:', v.desc)
-
-            print('capabilities:')
-            print('  dumb buffers:', device.get_capability(DRM_CAP_DUMB_BUFFER))
-            print('  VBLANK high CRTC:', device.get_capability(DRM_CAP_VBLANK_HIGH_CRTC))
-            print('  preferred depth:', device.get_capability(DRM_CAP_DUMB_PREFERRED_DEPTH))
-            print('  prefer shadow:', device.get_capability(DRM_CAP_DUMB_PREFER_SHADOW))
-
-            prime = device.get_capability(DRM_CAP_PRIME)
-            flags = []
-
-            if prime & DRM_CAP_PRIME_IMPORT:
-                flags.append('import')
-
-            if prime & DRM_CAP_PRIME_EXPORT:
-                flags.append('export')
-
-            print('  PRIME:', ', '.join(flags))
-            print('  timestamp monotonic:', device.get_capability(DRM_CAP_TIMESTAMP_MONOTONIC))
-            print('  async page flip:', device.get_capability(DRM_CAP_ASYNC_PAGE_FLIP))
-
-            width = device.get_capability(DRM_CAP_CURSOR_WIDTH)
-            height = device.get_capability(DRM_CAP_CURSOR_HEIGHT)
-            print('  cursor: %ux%u' % (width, height))
-
-            print('  framebuffer modifiers:', device.get_capability(DRM_CAP_ADDFB2_MODIFIERS))
-            print('  page flip target:', device.get_capability(DRM_CAP_PAGE_FLIP_TARGET))
-            print('  CRTC in VBLANK event:', device.get_capability(DRM_CAP_CRTC_IN_VBLANK_EVENT))
-            print('  Sync objects:', device.get_capability(DRM_CAP_SYNCOBJ))
-
-            device.set_capability(DRM_CLIENT_CAP_UNIVERSAL_PLANES, True)
-            device.get_resources()
-
-            if device.connectors:
-                print('connectors:')
-
-                for connector in device.connectors:
-                    print('  %s' % connector)
-
-                    if connector.modes:
-                        print('    modes:')
-
-                        for mode in connector.modes:
-                            flags = ', '.join(mode.get_flags())
-                            types = ', '.join(mode.get_types())
-
-                            if flags:
-                                flags = ' flags: %s' % flags
-
-                            if types:
-                                types = ' type: %s' % types
-
-                            print('      %s%s%s' % (mode, flags, types))
-
-                    print('    encoders:')
-
-                    for encoder in connector.encoders:
-                        if encoder == connector.encoder:
-                            print('    * %s' % encoder)
-                        else:
-                            print('      %s' % encoder)
-
-                    print('    properties:')
-
-                    for prop in connector.properties:
-                        if isinstance(prop, PropertyEnum):
-                            print('      %u: %s' % (prop.id, prop.name))
-
-                            for enum in prop.type:
-                                if enum is prop.value:
-                                    print('      * %u: %s' % (enum.value, enum.name))
-                                else:
-                                    print('        %u: %s' % (enum.value, enum.name))
-                        else:
-                            print('      %s' % prop)
-
-            if device.encoders:
-                print('encoders:')
-
-                for encoder in device.encoders:
-                    print('  %s' % encoder)
-                    print('    CRTCs:')
-
-                    for crtc in encoder.possible_crtcs:
-                        if crtc == encoder.crtc:
-                            print('    * %s' % crtc)
-                        else:
-                            print('      %s' % crtc)
-
-                    print('    Clones:')
-
-                    for clone in encoder.possible_clones:
-                        print('      %s' % clone)
-
-            if device.crtcs:
-                print('CRTCs:')
-
-                for crtc in device.crtcs:
-                    print('  %s' % crtc)
-
-            if device.framebuffers:
-                print('Framebuffers:')
-
-                for fb in device.framebuffers:
-                    print(' ', fb)
-
-            if device.planes:
-                print('Planes:')
-
-                for plane in device.planes:
-                    print('  %s' % plane)
-                    print('    CRTCs:')
-
-                    for crtc in plane.crtcs:
-                        if crtc == plane.crtc:
-                            print('    * %s' % crtc)
-                        else:
-                            print('      %s' % crtc)
-
-                    count = len(plane.formats)
-
-                    print('    %u format%s:' % (count, 's' if count > 1 else ''))
-
-                    for fmt in plane.formats:
-                        print('     ', fmt)
-
-                    count = len(plane.properties)
-
-                    print('    %u propert%s:' % (count, 'y' if count == 1 else 'ies'))
-
-                    for prop in plane.properties:
-                        if isinstance(prop, PropertyEnum):
-                            print('      %u: %s' % (prop.id, prop.name))
-
-                            for enum in prop.type:
-                                if enum is prop.value:
-                                    print('      * %u: %s' % (enum.value, enum.name))
-                                else:
-                                    print('        %u: %s' % (enum.value, enum.name))
-                        else:
-                            print('      %s' % prop)
